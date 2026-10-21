@@ -22,7 +22,23 @@ flowchart LR
 
 ## Results
 
-<!-- RESULTS -->
+Backfilled 2024-01-01 to 2026-10-21 (about 175k raw rows: 52k price points, 98k load points, 25k hourly
+weather rows) and trained on 24,422 complete hourly samples. Scores are **out-of-sample** from a 5-fold
+expanding-window backtest (20,350 forecast hours, 2024-06 to 2026-10):
+
+| Model | MAE (EUR/MWh) | RMSE (EUR/MWh) |
+|---|---|---|
+| **LightGBM** | **22.6** | **35.1** |
+| Same hour yesterday | 27.4 | 43.6 |
+| Same hour last week | 33.5 | 53.0 |
+
+That is 17% lower MAE than "same hour yesterday" and 32% lower than "same hour last week". The most useful
+features by gain are yesterday's price (42%), last week's price (17%) and wind speed (10%).
+
+The anomaly detector flagged 365 of 20,350 hours (1.8%). The largest residuals are extreme price hours,
+for example 2024-12-12 16:00 UTC (actual 873 vs. forecast 256 EUR/MWh) and 2026-05-01 11:00 UTC (actual -498
+vs. forecast -28 EUR/MWh). Negative prices are common in the data (2,753 hours), so prices are modelled on
+their natural scale rather than log-transformed.
 
 ## Quickstart
 
@@ -92,7 +108,7 @@ Timestamps are ISO-8601, naive values are read as UTC. Interactive docs are at `
 
 ## Tests and CI
 
-36+ tests: pure-function unit tests (feature lags, leakage, DST/holiday handling, anomaly
+44 tests (about 90% line coverage): pure-function unit tests (feature lags, leakage, DST/holiday handling, anomaly
 detection), integration tests against a **real PostgreSQL** (idempotent upserts, migrations,
 retraining, API), and ingestion tests with fake clients (no network).
 
