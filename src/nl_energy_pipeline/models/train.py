@@ -1,7 +1,7 @@
 import logging
 
 import pandas as pd
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete
 
 from nl_energy_pipeline.config import settings
 from nl_energy_pipeline.db import models
@@ -56,6 +56,10 @@ def train(engine: Engine, *, save_booster: bool = True) -> dict:
     predictions.insert(0, "model_version", version)
 
     with session_scope(engine) as session:
+        # Replace, don't merge: a retrain of the same version may cover a different backtest window.
+        session.execute(
+            delete(models.PricePrediction).where(models.PricePrediction.model_version == version)
+        )
         upsert_frame(session, models.PricePrediction, predictions)
         session.merge(
             models.ModelRun(model_version=version, n_train_rows=len(data), metrics=metrics)
