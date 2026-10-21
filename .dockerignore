@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.pgdata
+.scratch
+.env
+.ruff_cache
+.pytest_cache
+__pycache__
+*.pyc
+data
+artifacts
+tests
+docs
+scripts
