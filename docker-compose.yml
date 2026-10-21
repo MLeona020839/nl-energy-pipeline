@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nl_energy
+      POSTGRES_PASSWORD: nl_energy
+      POSTGRES_DB: nl_energy
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nl_energy -d nl_energy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    environment: &app-env
+      DATABASE_URL: postgresql+psycopg://nl_energy:nl_energy@db:5432/nl_energy
+      ENTSOE_API_TOKEN: ${ENTSOE_API_TOKEN:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # One-off jobs: `docker compose run --rm ingest`, `docker compose run --rm train`
+  ingest:
+    build: .
+    profiles: ["jobs"]
+    environment: *app-env
+    command: ["nl-energy-pipeline", "ingest", "--days", "7", "--no-parquet"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  train:
+    build: .
+    profiles: ["jobs"]
+    environment: *app-env
+    command: ["nl-energy-pipeline", "train"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
