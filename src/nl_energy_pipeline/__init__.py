@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from nl-energy-pipeline!")
+"""Dutch energy data pipeline: ingest, store, forecast, serve."""
