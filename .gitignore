@@ -225,3 +225,8 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+# Local dev Postgres (pgserver)
+.pgdata/
+artifacts/
+.scratch/

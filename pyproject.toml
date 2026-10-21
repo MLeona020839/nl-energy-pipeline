@@ -10,6 +10,8 @@ dependencies = [
     "alembic>=1.20.0",
     "entsoe-py>=0.8.1",
     "fastapi>=0.141.1",
+    "holidays>=0.107",
+    "joblib>=1.6.0",
     "lightgbm>=4.7.0",
     "pandas>=3.0.5",
     "psycopg[binary]>=3.3.5",
@@ -17,12 +19,13 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
+    "scikit-learn>=1.9.1",
     "sqlalchemy>=2.0.54",
     "uvicorn[standard]>=0.53.0",
 ]
 
 [project.scripts]
-nl-energy-pipeline = "nl_energy_pipeline:main"
+nl-energy-pipeline = "nl_energy_pipeline.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.15,<0.13.0"]
@@ -30,6 +33,8 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
+    "pgserver>=0.1.4",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
@@ -42,6 +47,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection style puts these calls in argument defaults on purpose.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
