@@ -21,7 +21,8 @@ against a real Postgres, and re-ingests daily on a schedule.
   prices, predictions, anomalies and model metrics.
 - Packaged with a multi-stage, non-root Docker image and docker-compose; GitHub Actions CI runs ruff, pytest
   (44 tests, ~90% coverage) against a Postgres service container and builds the image; scheduled workflow ingests daily.
-- *(Add only once it is actually deployed)* Deployed the API and database on Railway with health checks.
+- Deployed on Azure Container Apps with Azure Database for PostgreSQL; images are built and published by GitHub
+  Actions, and daily ingestion and weekly retraining run as scheduled Container Apps Jobs.
 
 ## SQL
 
@@ -56,10 +57,23 @@ import check), and I checked the runtime dependency set locally in a clean venv.
 
 - `ci.yml`: ruff lint + format check, pytest with a Postgres 16 service container and coverage, then a Docker build.
 - The same ruff rules run in pre-commit, but a local hook can be skipped with `--no-verify`, so CI is the real gate.
-- `ingest.yml`: cron daily, `concurrency` group so runs never overlap, secrets for the token and database URL,
-  retrain on Mondays.
-- Railway deploys the `Dockerfile` (`railway.json`) with `/health` as the health check; `DATABASE_URL` is normalised
-  because hosted Postgres hands out `postgres://` URLs.
+- `publish-image.yml`: on every push to `main`, builds the image and publishes it to GHCR with the built-in
+  `GITHUB_TOKEN` (no extra secrets).
+- Scheduling is not in GitHub Actions: Azure Container Apps Jobs run `ingest` daily and `train` weekly, next to the
+  API, with secrets stored as Container Apps secrets.
+
+## Cloud (Azure)
+
+- **Layout**: Container App for the API, two Container Apps Jobs (cron), PostgreSQL Flexible Server (Burstable B1ms,
+  SSL required). Config comes from environment variables; `DATABASE_URL` is normalised because hosted Postgres hands
+  out `postgresql://` URLs.
+- **Why GHCR and not Azure Container Registry**: this subscription blocks ACR Tasks (cloud builds), so GitHub
+  Actions builds the image and Azure pulls it from a public package. It also avoids paying for a registry.
+- **Operational lessons**: pinned the region after the first one was restricted for PostgreSQL on this subscription;
+  the Azure CLI cannot pass container arguments starting with `-`, so jobs are configured with environment variables
+  (`INGEST_DAYS`, `SAVE_PARQUET`) instead; secrets are entered at hidden prompts, never written to files.
+- **Honest gaps**: infrastructure was created with CLI commands, not Terraform/Bicep, and new images are not rolled
+  out to Azure automatically.
 
 ## Data and ML
 
@@ -99,4 +113,4 @@ import check), and I checked the runtime dependency set locally in a clean venv.
 | Features and leakage contract | `src/nl_energy_pipeline/features/transform.py` |
 | Backtest, training, anomalies | `src/nl_energy_pipeline/models/` |
 | API | `src/nl_energy_pipeline/api/main.py` |
-| Docker, CI, deploy | `Dockerfile`, `docker-compose.yml`, `.github/workflows/`, `railway.json` |
+| Docker, CI, deploy | `Dockerfile`, `docker-compose.yml`, `.github/workflows/` |

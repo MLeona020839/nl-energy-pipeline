@@ -17,7 +17,9 @@ flowchart LR
     E --> F["LightGBM<br/>expanding-window backtest"]
     F -->|"predictions, anomaly flags,<br/>metrics (JSONB)"| D
     D --> G["FastAPI"]
-    H["GitHub Actions<br/>CI + daily ingest"] -.-> C
+    H["GitHub Actions<br/>CI + image publish"] -.->|"image"| J
+    J["Azure Container Apps<br/>API + scheduled jobs"] --> C
+    J --> G
 ```
 
 ## Results
@@ -108,7 +110,7 @@ Timestamps are ISO-8601, naive values are read as UTC. Interactive docs are at `
 
 ## Tests and CI
 
-44 tests (about 90% line coverage): pure-function unit tests (feature lags, leakage, DST/holiday handling, anomaly
+45 tests (about 90% line coverage): pure-function unit tests (feature lags, leakage, DST/holiday handling, anomaly
 detection), integration tests against a **real PostgreSQL** (idempotent upserts, migrations,
 retraining, API), and ingestion tests with fake clients (no network).
 
@@ -116,25 +118,70 @@ GitHub Actions (`.github/workflows/`):
 
 - **`ci.yml`**: ruff lint + format check, pytest with a Postgres service container and coverage,
   then a Docker build that checks the image starts and can import LightGBM.
-- **`ingest.yml`**: daily scheduled run that re-ingests the last 3 days and retrains on Mondays.
-  Needs the repository secrets `ENTSOE_API_TOKEN` and `DATABASE_URL`.
+- **`publish-image.yml`**: on every push to `main`, builds the `Dockerfile` and publishes
+  `ghcr.io/<owner>/nl-energy-pipeline:latest` (and a commit-SHA tag) with the built-in `GITHUB_TOKEN`.
 
-## Deployment (Railway)
+## Deployment (Azure)
 
-`railway.json` points Railway at the `Dockerfile`; the container runs `alembic upgrade head` and
-then serves on `$PORT`, with `/health` as the health check.
+Everything runs on Azure Container Apps with Azure Database for PostgreSQL (Flexible Server):
 
-1. New Railway project -> deploy from this GitHub repo.
-2. Add a PostgreSQL service and set `DATABASE_URL` on the app to the Postgres service's
-   connection URL (plain `postgresql://...` URLs are accepted).
-3. Load data once from your machine: `DATABASE_URL=<railway public url> uv run nl-energy-pipeline ingest --start 2024-01-01`, then `... train`.
-4. Add the two secrets above to GitHub so the daily workflow keeps the database fresh.
+| Piece | What runs |
+|---|---|
+| Container App `nl-energy-api` | The API. On start it runs `alembic upgrade head`, then serves on `$PORT`; `/health` does a real `SELECT 1`. |
+| Container Apps Job `nl-energy-ingest` | `nl-energy-pipeline ingest` daily at 06:30 UTC (last 7 days; idempotent upserts). |
+| Container Apps Job `nl-energy-train` | `nl-energy-pipeline train` on Mondays at 07:00 UTC. |
+| PostgreSQL Flexible Server | Burstable B1ms, SSL required, firewall limited to Azure services plus the operator's IP. |
+
+The image is built by GitHub Actions and pulled from the public GHCR package, so there is no registry to pay
+for or authenticate against. (This subscription also blocks ACR Tasks, which rules out building in Azure.)
+
+Set up with the Azure CLI (names are examples; secrets are typed at a hidden prompt, never put in a file):
+
+```bash
+RG=nl-energy-rg; LOC=northeurope; PG_NAME=<globally-unique-name>
+az group create -n $RG -l $LOC
+read -s "DBPW?DB password: "
+az postgres flexible-server create -g $RG -n $PG_NAME -l $LOC --tier Burstable --sku-name Standard_B1ms \
+  --storage-size 32 --version 16 --admin-user nlenergy --admin-password "$DBPW" --public-access 0.0.0.0 --yes
+az postgres flexible-server db create -g $RG -s $PG_NAME -n nl_energy
+az postgres flexible-server firewall-rule create -g $RG -s $PG_NAME -n my-ip \
+  --start-ip-address <your-ip> --end-ip-address <your-ip>
+
+az containerapp env create -n nl-energy-api-env -g $RG -l $LOC
+DBURL="postgresql://nlenergy:${DBPW}@${PG_NAME}.postgres.database.azure.com:5432/nl_energy?sslmode=require"
+az containerapp create -n nl-energy-api -g $RG --environment nl-energy-api-env \
+  --image ghcr.io/<owner>/nl-energy-pipeline:latest --ingress external --target-port 8000 \
+  --min-replicas 1 --max-replicas 1 --secrets db-url="$DBURL" --env-vars DATABASE_URL=secretref:db-url
+
+az containerapp job create -n nl-energy-ingest -g $RG --environment nl-energy-api-env \
+  --trigger-type Schedule --cron-expression "30 6 * * *" --image ghcr.io/<owner>/nl-energy-pipeline:latest \
+  --cpu 0.5 --memory 1.0Gi --replica-timeout 1800 --replica-retry-limit 1 \
+  --command nl-energy-pipeline --args ingest \
+  --secrets db-url="$DBURL" entsoe-token="$ENTSOE_API_TOKEN" \
+  --env-vars DATABASE_URL=secretref:db-url ENTSOE_API_TOKEN=secretref:entsoe-token
+# the train job is the same with --cron-expression "0 7 * * 1", --cpu 1.0 --memory 2.0Gi, --args train
+# and no ENTSO-E token
+```
+
+Load the history once from your machine (for example `DATABASE_URL=<azure url> uv run nl-energy-pipeline ingest
+--start 2024-01-01`, then `train`), or copy it from a local database. Then check `https://<app-fqdn>/health` and
+`/docs`.
+
+Notes:
+
+- The Azure CLI cannot pass container arguments that start with `-`, so the jobs run plain `ingest` / `train` and
+  are configured through the environment instead (`INGEST_DAYS`, `SAVE_PARQUET`; the image sets
+  `SAVE_PARQUET=false` because the non-root container cannot write to `data/`).
+- Cost: Postgres and an always-on API replica bill continuously. Set a budget alert, and delete everything with
+  `az group delete -n nl-energy-rg --yes` when the demo is over.
 
 ## Limitations and next steps
 
 - The backtest uses observed weather as a stand-in for a weather *forecast*, so the reported error is
   somewhat optimistic compared with true day-ahead operation.
 - There is no `/forecast` for future hours yet; it would need an Open-Meteo forecast client.
-- Docker and the deployment configuration are written to be run, but are validated in CI
-  (image build + import check) rather than on a developer machine without Docker.
+- The Dockerfile is exercised by CI (build + import check) and by the Azure deployment, but was never run on the
+  author's own machine (no Docker installed there).
+- Deployment is a one-time CLI setup, not infrastructure-as-code, and new images are not rolled out to Azure
+  automatically; a redeploy needs `az containerapp update --image`.
 - Retraining is a scheduled batch job; there is no model registry or drift monitoring.
