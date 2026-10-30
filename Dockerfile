@@ -26,7 +26,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PORT=8000 ARTIFACT_DIR=/tmp/artifacts
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PORT=8000 ARTIFACT_DIR=/tmp/artifacts SAVE_PARQUET=false
 USER app
 EXPOSE 8000
 
