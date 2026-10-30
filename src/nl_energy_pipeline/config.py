@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     entsoe_api_token: str | None = None
     database_url: str = DEFAULT_DATABASE_URL
     artifact_dir: Path = Path("artifacts")
+    # Defaults for `nl-energy-pipeline ingest`, so a container job needs no dashed CLI arguments.
+    ingest_days: int = 7
+    save_parquet: bool = True
 
     @field_validator("database_url")
     @classmethod

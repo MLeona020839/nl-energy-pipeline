@@ -42,3 +42,21 @@ def test_train_command_dispatches_to_training(monkeypatch):
     cli.main(["train"])
 
     assert called == ["engine"]
+
+
+def test_env_settings_configure_ingest_without_cli_flags(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "get_engine", lambda: "engine")
+    monkeypatch.setattr(
+        cli,
+        "ingest",
+        lambda start, end, engine, save_parquet: seen.update(start=start, end=end, p=save_parquet),
+    )
+    monkeypatch.setattr(cli.settings, "ingest_days", 2)
+    monkeypatch.setattr(cli.settings, "save_parquet", False)
+
+    cli.main(["ingest"])
+
+    assert seen["end"] - seen["start"] >= pd.Timedelta(days=2)
+    assert seen["end"] - seen["start"] < pd.Timedelta(days=3, hours=1)
+    assert seen["p"] is False
